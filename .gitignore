@@ -1,0 +1,40 @@
+﻿# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Secrets and local environment (keep example templates)
+.env
+.env.*
+!.env.example
+!**/.env.example
+.env.keys
+
+# JavaScript / Next.js
+node_modules/
+.next/
+out/
+dist/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*~
