@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from functools import lru_cache
 
@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: SecretStr | None = None
     supabase_anon_key: SecretStr | None = None
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    max_upload_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_upload_size_bytes: int = Field(default=500 * 1024 * 1024, gt=0)
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

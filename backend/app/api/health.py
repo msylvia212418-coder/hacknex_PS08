@@ -1,11 +1,11 @@
-﻿from fastapi import APIRouter
+from fastapi import APIRouter
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from app.core.errors import error_payload
 from app.schemas.errors import DatabaseUnavailableResponse
 from app.schemas.health import DatabaseHealthResponse, HealthResponse
-from app.services.supabase_client import get_supabase_client
+from app.services import supabase_client
 
 router = APIRouter(tags=["health"])
 
@@ -13,7 +13,7 @@ router = APIRouter(tags=["health"])
 def check_database_connection() -> None:
     """Perform one bounded, lightweight read through Supabase PostgREST."""
 
-    get_supabase_client().table("projects").select("id").limit(1).execute()
+    supabase_client.get_supabase_client().table("projects").select("id").limit(1).execute()
 
 
 @router.get("/health", response_model=HealthResponse)
