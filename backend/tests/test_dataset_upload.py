@@ -350,3 +350,173 @@ def test_openapi_documents_dataset_endpoints() -> None:
     assert "/datasets/{dataset_id}" in paths
     assert "get" in paths["/datasets/{dataset_id}"]
     assert set(paths["/datasets/{dataset_id}"]["get"]["responses"]) >= {"200", "404", "422"}
+
+
+# ---------------------------------------------------------------------------
+# CodeRabbit hardening tests
+# ---------------------------------------------------------------------------
+
+def test_upload_storage_uses_streaming_reader(monkeypatch) -> None:
+    """Fix 1: Storage upload must stream via BufferedReader without reading all bytes into memory."""
+    from io import BufferedReader
+    from app.services import storage_service
+
+    uploaded_files = []
+
+    class DummyBucket:
+        def upload(self, *, path, file, file_options=None):
+            uploaded_files.append((path, type(file), file))
+
+    class DummyClient:
+        def __init__(self):
+            self.storage = self
+
+        def from_(self, _bucket):
+            return DummyBucket()
+
+    dummy_client = DummyClient()
+    monkeypatch.setattr(storage_service.supabase_client, "get_supabase_client", lambda: dummy_client)
+
+    data = b"ID,Name\n1,Alpha\n"
+    stream = io.BytesIO(data)
+    storage_service.upload_dataset_file("test/path/data.csv", stream)
+
+    assert len(uploaded_files) == 1
+    path, file_type, file_val = uploaded_files[0]
+    assert path == "test/path/data.csv"
+    assert issubclass(file_type, BufferedReader)
+    # The file position of original stream should be reset
+    assert stream.tell() == 0
+
+
+def test_upload_failure_transitions_to_failed_and_cleans_storage(monkeypatch, mock_supabase) -> None:
+    """Fix 2: If profiling fails after upload, dataset status is set to FAILED and storage object removed."""
+    from app.api import datasets
+
+    # Simulate profiling failure
+    def fail_profiling(_file):
+        raise ValueError("Simulated profiling failure")
+
+    monkeypatch.setattr(datasets, "profile_csv", fail_profiling)
+
+    csv_data = b"A,B\n1,2\n"
+    response = client.post(
+        "/datasets/upload",
+        data={"project_id": PROJECT_ID},
+        files={"file": ("fail_profile.csv", csv_data, "text/csv")},
+    )
+    assert response.status_code == 400
+    assert "Simulated profiling failure" in response.json()["error"]["message"]
+
+    # Storage object must have been cleaned up
+    assert len(mock_supabase.storage.removed) >= 1
+    assert "fail_profile.csv" in mock_supabase.storage.removed[0]
+
+    # Dataset row in DB must be transitioned to FAILED, not stuck in UPLOADING
+    datasets_table = mock_supabase._tables.get("datasets", [])
+    assert len(datasets_table) >= 1
+    last_dataset = datasets_table[-1]
+    assert last_dataset["status"] == "FAILED"
+
+
+def test_upload_profile_insertion_failure_transitions_to_failed(monkeypatch, mock_supabase) -> None:
+    """Fix 2: If profile DB insertion fails, dataset status is set to FAILED."""
+    from app.api import datasets
+
+    async def fail_insert_profile(_did, _pdict):
+        raise RuntimeError("DB connection dropped")
+
+    monkeypatch.setattr(datasets, "_insert_profile", fail_insert_profile)
+
+    csv_data = b"A,B\n1,2\n"
+    response = client.post(
+        "/datasets/upload",
+        data={"project_id": PROJECT_ID},
+        files={"file": ("fail_db.csv", csv_data, "text/csv")},
+    )
+    assert response.status_code == 500
+
+    # Dataset row must have been transitioned to FAILED
+    datasets_table = mock_supabase._tables.get("datasets", [])
+    assert len(datasets_table) >= 1
+    assert datasets_table[-1]["status"] == "FAILED"
+    # Storage file was removed
+    assert len(mock_supabase.storage.removed) >= 1
+
+
+def test_strict_utf8_rejects_invalid_encoding() -> None:
+    """Fix 3: Invalid UTF-8 bytes must cause validation failure, not silent replacement."""
+    bad_bytes = b"Name,Value\n\x80\x81\xff,123\n"
+    file_obj = io.BytesIO(bad_bytes)
+    try:
+        dataset_service.validate_csv_structure(file_obj)
+        assert False, "Should have raised ValueError on invalid UTF-8"
+    except ValueError as exc:
+        assert "utf-8" in str(exc).lower() or "encoding" in str(exc).lower()
+
+
+def test_strict_utf8_rejects_binary_file(mock_supabase) -> None:
+    """Fix 3: Binary/non-UTF8 file fails with 400."""
+    binary_content = b"\x80\x81\xff\xfe\xaa\xbbbinary\n"
+    response = client.post(
+        "/datasets/upload",
+        data={"project_id": PROJECT_ID},
+        files={"file": ("binary.csv", binary_content, "text/csv")},
+    )
+    assert response.status_code == 400
+    assert "utf-8" in response.json()["error"]["message"].lower() or "encoding" in response.json()["error"]["message"].lower()
+
+
+def test_profiler_rejects_nan_and_inf_from_numeric(mock_supabase) -> None:
+    """Fix 4: Columns containing NaN, Inf, -Infinity must NOT be inferred as numeric."""
+    csv_data = b"Mixed,OnlyInf,ValidNum\n1.5,inf,10\nNaN,-Infinity,20\n3.0,inf,30\n"
+    file_obj = io.BytesIO(csv_data)
+    profile = dataset_service.profile_csv(file_obj)
+
+    col_map = {c["name"]: c for c in profile["columns"]}
+
+    # 'Mixed' contains 'NaN' -> should be inferred as string
+    assert col_map["Mixed"]["type"] == "string"
+    assert "min" not in col_map["Mixed"]
+
+    # 'OnlyInf' contains 'inf' and '-Infinity' -> string
+    assert col_map["OnlyInf"]["type"] == "string"
+    assert "min" not in col_map["OnlyInf"]
+
+    # 'ValidNum' contains strictly finite numbers -> integer
+    assert col_map["ValidNum"]["type"] == "integer"
+    assert col_map["ValidNum"]["min"] == 10.0
+    assert col_map["ValidNum"]["max"] == 30.0
+    assert col_map["ValidNum"]["mean"] == 20.0
+
+
+def test_storage_filename_safety_prevents_path_traversal(mock_supabase) -> None:
+    """Fix 5: Path traversal components must be stripped from the storage path."""
+    csv_data = b"ColA\n1\n"
+    response = client.post(
+        "/datasets/upload",
+        data={"project_id": PROJECT_ID},
+        files={"file": ("../../etc/passwd.csv", csv_data, "text/csv")},
+    )
+    assert response.status_code == 201
+    body = response.json()
+
+    # Original filename preserves clean basename
+    assert body["original_filename"] == "passwd.csv"
+    # Storage path must NOT contain ".."
+    assert ".." not in body["storage_path"]
+    assert body["storage_path"].endswith("/passwd.csv")
+
+
+def test_storage_filename_safety_normalizes_special_characters(mock_supabase) -> None:
+    """Fix 5: Unsafe characters in filename are normalized for the storage key."""
+    csv_data = b"ColA\n1\n"
+    response = client.post(
+        "/datasets/upload",
+        data={"project_id": PROJECT_ID},
+        files={"file": ("my test file (1).csv", csv_data, "text/csv")},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["original_filename"] == "my test file (1).csv"
+    assert body["storage_path"].endswith("/my_test_file__1.csv")

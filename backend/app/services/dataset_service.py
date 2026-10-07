@@ -41,11 +41,12 @@ def compute_content_hash(file_obj: BinaryIO) -> tuple[str, int]:
 def validate_csv_structure(file_obj: BinaryIO) -> list[str]:
     """Validate that the file is parseable CSV and return column headers.
 
-    Raises ``ValueError`` for empty, header-only, or unparseable files.
+    Uses strict UTF-8 decoding (with BOM support). Raises ``ValueError`` for
+    empty files, header-only files, malformed syntax, or invalid UTF-8 bytes.
     Resets the file position when done.
     """
     file_obj.seek(0)
-    wrapper = io.TextIOWrapper(file_obj, encoding="utf-8-sig", errors="replace", newline="")
+    wrapper = io.TextIOWrapper(file_obj, encoding="utf-8-sig", errors="strict", newline="")
     try:
         reader = csv.reader(wrapper)
         try:
@@ -66,6 +67,8 @@ def validate_csv_structure(file_obj: BinaryIO) -> list[str]:
             raise ValueError("CSV file contains a header but no data rows.")
 
         return cleaned
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid UTF-8 encoding: {exc}")
     except csv.Error as exc:
         raise ValueError(f"Malformed CSV: {exc}")
     finally:
@@ -86,9 +89,10 @@ def _try_int(value: str) -> bool:
 
 
 def _try_float(value: str) -> bool:
+    """Return True only for finite numbers (reject NaN and +/-Infinity)."""
     try:
-        float(value)
-        return True
+        val = float(value)
+        return math.isfinite(val)
     except (ValueError, OverflowError):
         return False
 
@@ -149,13 +153,13 @@ class _ColumnProfiler:
         if self.str_max_length is None or slen > self.str_max_length:
             self.str_max_length = slen
 
-        # Type inference (short-circuits once a type is ruled out)
+        # Type inference: strictly finite numerics (rejects NaN, +/-Inf)
         if self.is_integer and not _try_int(stripped):
             self.is_integer = False
         if self.is_float and not _try_float(stripped):
             self.is_float = False
 
-        # Numeric statistics
+        # Numeric statistics (only accumulated if finite)
         if self.is_integer or self.is_float:
             try:
                 num_val = float(stripped)
@@ -212,15 +216,20 @@ class _ColumnProfiler:
 def profile_csv(file_obj: BinaryIO) -> dict[str, Any]:
     """Profile a CSV file by streaming row-by-row.
 
+    Uses strict UTF-8 decoding. Raises ``ValueError`` for invalid encoding
+    or malformed CSV rows.
     Returns a dict suitable for storage in ``dataset_profiles.profile``.
     Does **not** load the entire file into memory.
     Resets the file position when done.
     """
     file_obj.seek(0)
-    wrapper = io.TextIOWrapper(file_obj, encoding="utf-8-sig", errors="replace", newline="")
+    wrapper = io.TextIOWrapper(file_obj, encoding="utf-8-sig", errors="strict", newline="")
     try:
         reader = csv.reader(wrapper)
-        headers = next(reader)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            raise ValueError("CSV file is empty — no header row found.")
         headers = [h.strip() for h in headers]
 
         profilers = [_ColumnProfiler(name) for name in headers]
@@ -238,6 +247,8 @@ def profile_csv(file_obj: BinaryIO) -> dict[str, Any]:
             "column_count": col_count,
             "columns": [p.to_dict() for p in profilers],
         }
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid UTF-8 encoding during profiling: {exc}")
     except csv.Error as exc:
         raise ValueError(f"Malformed CSV during profiling: {exc}")
     finally:

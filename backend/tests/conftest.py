@@ -89,12 +89,25 @@ class MockSupabaseStorage:
 
     def __init__(self) -> None:
         self.uploaded: list[tuple[str, int]] = []  # (path, size)
+        self.removed: list[str] = []
 
     def from_(self, _bucket: str) -> MockSupabaseStorage:
         return self
 
-    def upload(self, *, path: str, file: bytes, file_options: dict | None = None) -> None:
-        self.uploaded.append((path, len(file)))
+    def upload(self, *, path: str, file: Any, file_options: dict | None = None) -> None:
+        if isinstance(file, bytes):
+            size = len(file)
+        elif hasattr(file, "seek") and hasattr(file, "read"):
+            curr = file.tell()
+            content = file.read()
+            size = len(content) if isinstance(content, (bytes, bytearray)) else 0
+            file.seek(curr)
+        else:
+            size = 0
+        self.uploaded.append((path, size))
+
+    def remove(self, paths: list[str]) -> None:
+        self.removed.extend(paths)
 
 
 class MockSupabaseClient:
