@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analysis, datasets, health, projects
+from app.api import analysis, claims, datasets, health, projects
 from app.core.config import Settings, get_settings
 from app.core.errors import register_error_handlers
 from app.core.middleware import UploadSizeLimitMiddleware
@@ -29,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health.router)
     application.include_router(projects.router)
     application.include_router(datasets.router)
+    application.include_router(claims.router)
     application.include_router(analysis.router)
     return application
 

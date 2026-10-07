@@ -85,3 +85,48 @@ Each column in the profile `columns` array contains:
 | `mean` | number or null | Mean (numeric columns only) |
 | `min_length` | integer or null | Shortest non-null string length |
 | `max_length` | integer or null | Longest non-null string length |
+
+## `POST /claims/extract`
+
+- **Request:** JSON object with `question` (non-empty string) and `dataset_id` (UUID of an existing dataset with status `READY`).
+- **Headers:** Requires `Authorization: Bearer <Supabase Auth access token>`. The token is validated by Supabase Auth; the authenticated user must own the dataset through its project ownership.
+- **Response (200):** A `ClaimExtractResponse` with extraction and validation results:
+  ```json
+  {
+    "question": "Which country had the highest total revenue?",
+    "dataset_id": "...",
+    "claim": {
+      "claim_text": "Country with higher sum Revenue",
+      "claim_type": "EXTREMUM",
+      "subject": "country",
+      "metric": "Revenue",
+      "aggregation": "SUM",
+      "distinct": false,
+      "cancellation_filter": null,
+      "pre_aggregation": null,
+      "operation": "ARGMAX",
+      "group_by": "Country",
+      "direction": "HIGHER",
+      "comparison_target": null,
+      "comparison_baseline": null,
+      "required_evidence": ["ROW", "AGGREGATION"]
+    },
+    "status": "VALID",
+    "ambiguity_reason": null,
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+  ```
+- **Authentication & Authorization:** Missing or invalid `Authorization` header returns HTTP 401. Accessing another user's dataset returns HTTP 403.
+- **Validation:** Empty/whitespace-only question returns HTTP 422. Missing dataset_id returns HTTP 422. Non-existent dataset returns HTTP 404. Non-ready dataset (status other than `READY`, e.g. `UPLOADING` or `FAILED`) returns HTTP 400 with a structured error indicating that claim extraction requires a ready dataset. Dataset without a profile (or empty/unavailable profile) returns HTTP 404.
+- **Ambiguous & Unparseable Questions:** Semantically ambiguous questions (e.g. "Which country performed best?", or "Which country has the highest average transaction value?" without specifying cancellation treatment) return HTTP 200 with `status: "AMBIGUOUS"` and an `ambiguity_reason`. Questions outside supported analytical patterns return HTTP 200 with `status: "INVALID"` and descriptive `validation_errors`.
+- **Dataset prerequisites:** Claim extraction requires a `READY` dataset with a generated profile.
+- **Claim types:** `EXTREMUM`, `SIMPLE_AGGREGATION`, `COMPARISON`, `RANKING`, `UNKNOWN`.
+- **Aggregation types:** `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX`.
+- **Operation types:** `ARGMAX`, `ARGMIN`, `COMPARE_GREATER`, `COMPARE_LESS`, `COMPARE_EQUAL`, `TOTAL`, `VALUE`.
+- **Direction types:** `HIGHER`, `LOWER`, `INCREASE`, `DECREASE`, `EQUAL`.
+- **Status values:** `VALID` (claim is well-formed and all referenced columns exist), `INVALID` (structural or schema validation failures), `AMBIGUOUS` (question is semantically ambiguous — missing metric, unclear intent, or unaddressed cancellation handling).
+- **Semantics:** The claim describes WHAT needs to be verified, not the numerical answer. Answers are computed by downstream deterministic pipeline stages.
+- **Transaction count semantics:** "Which country has the most transactions?" extracts `COUNT DISTINCT InvoiceNo` grouped by `Country`, setting `distinct: true` in the claim.
+- **Cancellation handling:** Questions asking for transaction value metrics in datasets containing cancellations must explicitly specify cancellation treatment (e.g. "excluding cancellations" or "including cancellations"); otherwise they return `AMBIGUOUS`.
+- **Limitations:** Uses rule-based pattern extraction (not LLM). Supports extremum/argmax, simple aggregation, comparison, and count patterns. The `ClaimExtractorProtocol` interface supports future LLM-backed extraction. Does not persist claims to the database yet.

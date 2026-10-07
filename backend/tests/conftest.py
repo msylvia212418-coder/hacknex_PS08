@@ -177,10 +177,12 @@ def mock_supabase(monkeypatch):
     import app.api.health as health_mod
     import app.api.projects as projects_mod
     import app.api.datasets as datasets_mod
+    import app.api.claims as claims_mod
 
     monkeypatch.setattr(sc_mod, "get_supabase_client", _get_client)
     monkeypatch.setattr(storage_mod, "get_supabase_client", _get_client, raising=False)
     monkeypatch.setattr(health_mod, "get_supabase_client", _get_client, raising=False)
     monkeypatch.setattr(projects_mod, "get_supabase_client", _get_client, raising=False)
     monkeypatch.setattr(datasets_mod, "get_supabase_client", _get_client, raising=False)
+    monkeypatch.setattr(claims_mod, "get_supabase_client", _get_client, raising=False)
     return client
