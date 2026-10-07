@@ -1010,4 +1010,4 @@ VERIPROOF addresses this gap by turning AI analytics from **answer generation in
 > ## It should earn trust by surviving verification.
 
 **VERIPROOF — Don't trust the answer. Verify the claim.**
-```
+
