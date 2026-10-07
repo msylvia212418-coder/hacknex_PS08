@@ -56,40 +56,45 @@ async def extract_claim(
     # 2. Fetch dataset schema (column names) from dataset profile after verifying ownership
     available_columns = await _get_dataset_columns(request.dataset_id, caller_id)
 
-    # 3. Extract structured claim from the question text
-    extractor = get_claim_extractor()
-    claim, ambiguity_reason = extractor.extract_claim(
+    return _extract_and_validate_claim(
         request.question,
-        available_columns=available_columns,
+        request.dataset_id,
+        available_columns,
     )
 
-    # 4. Handle ambiguity (semantically ambiguous question)
-    if claim is None and ambiguity_reason is not None:
+
+def _extract_and_validate_claim(
+    question: str,
+    dataset_id: UUID,
+    available_columns: list[str],
+) -> ClaimExtractResponse:
+    """Share Task 3 extraction and schema validation across claim APIs."""
+    extracted, ambiguity_reason = get_claim_extractor().extract_claim(
+        question,
+        available_columns=available_columns,
+    )
+    if extracted is None and ambiguity_reason:
         return ClaimExtractResponse(
-            question=request.question,
-            dataset_id=request.dataset_id,
+            question=question,
+            dataset_id=dataset_id,
             claim=None,
             status=ClaimValidationStatus.AMBIGUOUS,
             ambiguity_reason=ambiguity_reason,
         )
-
-    # 5. Handle unparseable question (no pattern matched, not ambiguous)
-    if claim is None:
+    if extracted is None:
         return ClaimExtractResponse(
-            question=request.question,
-            dataset_id=request.dataset_id,
+            question=question,
+            dataset_id=dataset_id,
             claim=None,
             status=ClaimValidationStatus.INVALID,
             validation_errors=["Could not extract an analytical claim from the question."],
         )
 
-    # 6. Validate the extracted claim against dataset schema
-    status, errors, warnings = validate_claim(claim, available_columns)
-
+    status, errors, warnings = validate_claim(extracted, available_columns)
     return ClaimExtractResponse(
-        question=request.question,
-        dataset_id=request.dataset_id,
-        claim=claim,
+        question=question,
+        dataset_id=dataset_id,
+        claim=extracted,
         status=status,
         validation_errors=errors,
         validation_warnings=warnings,

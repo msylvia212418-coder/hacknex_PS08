@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import io
 import logging
+from pathlib import Path
 from typing import BinaryIO
+
+import httpx
 
 from app.services import supabase_client
 
@@ -70,3 +73,26 @@ def delete_dataset_file(storage_path: str) -> None:
         logger.info("Deleted %s/%s from storage", DATASET_BUCKET, storage_path)
     except Exception:
         logger.exception("Failed to delete storage object %s", storage_path)
+
+
+def download_dataset_file(storage_path: str, destination_path: str | Path) -> int:
+    """Stream a private dataset object into a local file without buffering it in RAM."""
+    client = supabase_client.get_supabase_client()
+    signed_url_response = client.storage.from_(DATASET_BUCKET).create_signed_url(
+        storage_path,
+        60,
+    )
+    signed_url = signed_url_response.get("signedURL") or signed_url_response.get("signedUrl")
+    if not signed_url:
+        raise FileNotFoundError("Dataset object is not available in storage.")
+
+    destination = Path(destination_path)
+    bytes_written = 0
+    with httpx.stream("GET", signed_url, timeout=120.0) as response:
+        response.raise_for_status()
+        with destination.open("wb") as output:
+            for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                if chunk:
+                    output.write(chunk)
+                    bytes_written += len(chunk)
+    return bytes_written
