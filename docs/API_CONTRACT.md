@@ -1,6 +1,6 @@
-# VERIPROOF API Contract (Foundation + Dataset Pipeline)
+# VERIPROOF API Contract
 
-Base URL: `http://localhost:8000`. Responses below describe the FastAPI foundation and the dataset ingestion pipeline. The proof-analysis pipeline is future work.
+Base URL: `http://localhost:8000`. The API includes project and dataset management, claim extraction, and the end-to-end proof verification endpoint. The legacy `/analysis` endpoints remain placeholders.
 
 ## Upload configuration
 
@@ -130,3 +130,13 @@ Each column in the profile `columns` array contains:
 - **Transaction count semantics:** "Which country has the most transactions?" extracts `COUNT DISTINCT InvoiceNo` grouped by `Country`, setting `distinct: true` in the claim.
 - **Cancellation handling:** Questions asking for transaction value metrics in datasets containing cancellations must explicitly specify cancellation treatment (e.g. "excluding cancellations" or "including cancellations"); otherwise they return `AMBIGUOUS`.
 - **Limitations:** Uses rule-based pattern extraction (not LLM). Supports extremum/argmax, simple aggregation, comparison, and count patterns. The `ClaimExtractorProtocol` interface supports future LLM-backed extraction. Does not persist claims to the database yet.
+
+## `POST /verify`
+
+- **Request:** JSON object with `dataset_id` (UUID) and `question` (non-empty string).
+- **Headers:** Requires `Authorization: Bearer <Supabase Auth access token>`. The token is validated by Supabase Auth; the authenticated user must own the dataset's project.
+- **Response (200):** A `VerificationResponse` containing `verdict` (`PROVABLE`, `INCONCLUSIVE`, or `AMBIGUOUS`), `dataset_id`, `question`, `claim_status`, the optional `claim`, ordered `proof_obligations`, optional `computation`, optional independent `verification`, and the `release` decision and checks.
+- **Authentication & authorization:** Missing, malformed, or invalid/expired access token returns HTTP 401. A valid user who does not own the dataset returns HTTP 403 without exposing ownership details.
+- **Dataset validation:** Unknown dataset returns 404; non-READY dataset returns 400; missing dataset profile returns 404. Unavailable stored CSV returns a controlled 404 or 503.
+- **Pipeline:** Reuses claim extraction and validation, proof obligation compilation, deterministic CSV computation, the computation result's independent verification, and the release gate. Ambiguous questions stop before CSV retrieval and computation. Expected analytical failures are returned as `INCONCLUSIVE` or `AMBIGUOUS` results rather than fabricated answers.
+- **Limitations:** Computation currently returns bounded grouped results; `/verify` does not persist runs. Stability analysis, adversarial refutation, claim-flip boundaries, and repair planning are not implemented by this endpoint.

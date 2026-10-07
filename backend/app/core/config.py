@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     supabase_url: AnyHttpUrl | None = None
     supabase_service_role_key: SecretStr | None = None
     supabase_anon_key: SecretStr | None = None
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
     max_upload_size_bytes: int = Field(default=500 * 1024 * 1024, gt=0)
 
     model_config = SettingsConfigDict(
